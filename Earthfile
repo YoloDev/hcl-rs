@@ -4,8 +4,8 @@ FROM yolodev/ragel:v${RAGEL_VERSION}
 
 unicode:
   COPY crates/lex/src/unicode2ragel.rb .
-  RUN ruby unicode2ragel.rb --url=http://www.unicode.org/Public/9.0.0/ucd/DerivedCoreProperties.txt -m UnicodeDerived -p ID_Start,ID_Continue -o unicode_derived.rl
-  SAVE ARTIFACT unicode_derived.rl
+  RUN ruby unicode2ragel.rb --url=https://www.unicode.org/Public/14.0.0/ucd/DerivedCoreProperties-14.0.0d21.txt -m UnicodeDerived -p ID_Start,ID_Continue -o unicode_derived.rl
+  SAVE ARTIFACT --keep-ts unicode_derived.rl
 
 ragel:
   COPY +unicode/unicode_derived.rl .
@@ -22,7 +22,9 @@ format-scanner:
 
 scanner:
   COPY --keep-ts +format-scanner/scanner.rs .
+  COPY --keep-ts +unicode/unicode_derived.rl .
   SAVE ARTIFACT --keep-ts scanner.rs AS LOCAL crates/lex/src/scanner.rs
+  SAVE ARTIFACT --keep-ts unicode_derived.rl AS LOCAL crates/lex/src/unicode_derived.rl
 
 create-image:
   FROM rust:bullseye
