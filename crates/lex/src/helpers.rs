@@ -87,12 +87,4 @@ mod tests {
     let actual = trim_space(s_in.as_bytes());
     assert_eq!(std::str::from_utf8(actual).unwrap(), s_out);
   }
-
-  #[test]
-  fn single_test() {
-    let s_in = "b ";
-    let s_out = "b";
-    let actual = trim_space(s_in.as_bytes());
-    assert_eq!(std::str::from_utf8(actual).unwrap(), s_out);
-  }
 }

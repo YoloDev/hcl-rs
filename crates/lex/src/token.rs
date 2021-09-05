@@ -1,14 +1,15 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
   kind: TokenKind,
   len: u32,
 }
 
 impl Token {
-  pub(crate) fn from_scanner(kind: TokenKind, start: i32, end: i32) -> Self {
-    debug_assert!(end >= start);
+  pub(crate) fn from_scanner(kind: TokenKind, len: i32) -> Self {
+    debug_assert!(len >= 0);
     Self {
       kind,
-      len: (end - start) as u32,
+      len: len as u32,
     }
   }
 
@@ -126,6 +127,7 @@ token_enum! {
     TriviaComment                 /// Comment.
     TriviaNewline(b'\n')          /// `\n`
     TriviaEndOfFile               /// End of file token.
+    TriviaByteOrderMark           /// Leading UTF-8 byte-order mark token.
 
     // The rest are not used in the language but recognized by the scanner so
     // we can generate good diagnostics in the parser when users try to write

@@ -10,14 +10,19 @@ unicode:
 ragel:
   COPY +unicode/unicode_derived.rl .
   COPY crates/lex/src/scanner.rl .
-  RUN ragel-rust -e -F1 scanner.rl && rustfmt scanner.rs
+  RUN ragel-rust -e -F1 scanner.rl
   SAVE ARTIFACT scanner.rs
 
-scanner:
-  COPY +unicode/unicode_derived.rl .
+format-scanner:
+  COPY rustfmt.toml .
   COPY +ragel/scanner.rs .
-  SAVE ARTIFACT unicode_derived.rl AS LOCAL crates/lex/src/unicode_derived.rl
-  SAVE ARTIFACT scanner.rs AS LOCAL crates/lex/src/scanner.rs
+  COPY crates/lex/src/scanner .
+  RUN rustfmt scanner.rs
+  SAVE ARTIFACT --keep-ts scanner.rs
+
+scanner:
+  COPY --keep-ts +format-scanner/scanner.rs .
+  SAVE ARTIFACT --keep-ts scanner.rs AS LOCAL crates/lex/src/scanner.rs
 
 create-image:
   FROM rust:bullseye

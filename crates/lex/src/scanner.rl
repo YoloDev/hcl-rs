@@ -1,5 +1,6 @@
 #![allow(clippy::assign_op_pattern)]
 #![allow(clippy::comparison_chain)]
+#![allow(clippy::identity_op)]
 #![allow(clippy::never_loop)]
 #![allow(clippy::single_match)]
 #![allow(dead_code)]
@@ -55,6 +56,45 @@ struct HereDocInProgress {
 }
 
 impl Lexer {
+  pub fn new() -> Self {
+    Self::with_cs(hcltok_en_file)
+  }
+
+  pub fn new_tokens() -> Self {
+    Self::with_cs(hcltok_en_main)
+  }
+
+  pub fn new_template() -> Self {
+    Self::with_cs(hcltok_en_bareTemplate)
+  }
+
+  pub fn new_ident_only() -> Self {
+    Self::with_cs(hcltok_en_identOnly)
+  }
+
+  fn with_cs(cs: i32) -> Self {
+    let mut ret = Lexer {
+      p: 0,
+      cs: 0,
+      top: 0,
+      ts: 0,
+      te: 0,
+      act: 0,
+      stack: Default::default(),
+      heredocs: Default::default(),
+      braces: 0,
+      ret_braces: Default::default(),
+      tokens: ::std::collections::VecDeque::with_capacity(512),
+      tok_start: 0,
+      #[cfg(debug_assertions)]
+      len: 0,
+      #[cfg(debug_assertions)]
+      block_offset: 0,
+    };
+
+    ret.init(cs);
+    ret
+  }
 
   fn init(&mut self, cs: i32) {
     self.cs = cs;
@@ -62,7 +102,9 @@ impl Lexer {
   }
 
   fn token(&mut self, token_kind: TokenKind) {
-    let token = Token::from_scanner(token_kind, self.ts, self.te);
+    let tok_len = self.te - self.tok_start;
+    self.tok_start += tok_len;
+    let token = Token::from_scanner(token_kind, tok_len);
 
     #[cfg(debug_assertions)]
     {
@@ -78,9 +120,41 @@ impl Lexer {
     self.token(kind)
   }
 
+  fn finish_block(&mut self, data: &[u8], is_final_block: bool) -> usize {
+    if is_final_block {
+      debug_assert!(self.p as usize == data.len(), "expected to scan the entire block when is_final_block is true.");
+
+      self.ts = data.len() as i32;
+      self.te = data.len() as i32;
+      self.token(TokenKind::TriviaEndOfFile);
+    }
+
+    // TODO: We need to check other pointers as well, not just ts...
+    let consumed = if self.ts > 0 {
+      let shift = self.ts;
+      self.ts = 0;
+      self.te -= shift;
+      #[cfg(debug_assertions)]
+      {
+        self.block_offset += shift as u32;
+      }
+      shift
+    } else {
+      self.p
+    };
+
+    self.tok_start -= consumed;
+    #[cfg(debug_assertions)]
+    {
+      self.block_offset += consumed as u32;
+    }
+    consumed as usize
+  }
+
   fn scan_block(&mut self, data: &[u8], is_final_block: bool) -> usize {
+    self.p = 0;
     let pe = data.len() as i32;
-    let eof = if is_final_block { pe } else { -1i32 };
+    let eof = if is_final_block { pe } else { i32::MIN };
 
     %%{
       include UnicodeDerived "unicode_derived.rl";
@@ -93,6 +167,8 @@ impl Lexer {
         0xF0..0xF7 . UTF8Cont . UTF8Cont . UTF8Cont
       );
       BrokenUTF8 = any - AnyUTF8;
+
+      UTF8BOM = 0xef . 0xbb . 0xbf;
 
       NumberLitContinue = (digit|'.'|('e'|'E') ('+'|'-')? digit);
       NumberLit = digit ("" | (NumberLitContinue - '.') | (NumberLitContinue* (NumberLitContinue - '.')));
@@ -302,7 +378,7 @@ impl Lexer {
           unreachable!();
         }
 
-        self.token_from_consumed(b[0])
+        self.token_from_consumed(b[0]);
       }
 
       TemplateInterp = "${" ("~")?;
@@ -357,18 +433,23 @@ impl Lexer {
       *|;
 
       identOnly := |*
-          Ident            => { self.token(TokenKind::Ident) };
-          BrokenUTF8       => { self.token(TokenKind::ErrorBadUtf8) };
-          AnyUTF8          => { self.token(TokenKind::ErrorInvalid) };
+          Ident            => { self.token(TokenKind::Ident); };
+          BrokenUTF8       => { self.token(TokenKind::ErrorBadUtf8); };
+          AnyUTF8          => { self.token(TokenKind::ErrorInvalid); };
+      *|;
+
+      file := |*
+        UTF8BOM            => { self.token(TokenKind::TriviaByteOrderMark); fgoto main; };
+        (any - UTF8BOM)    => { fhold; fnext main; };
       *|;
 
       main := |*
-          Spaces           => { self.token(TokenKind::TriviaWhitespace) };
-          NumberLit        => { self.token(TokenKind::LiteralNumber) };
-          Ident            => { self.token(TokenKind::Ident) };
+          Spaces           => { self.token(TokenKind::TriviaWhitespace); };
+          NumberLit        => { self.token(TokenKind::LiteralNumber); };
+          Ident            => { self.token(TokenKind::Ident); };
 
-          Comment          => { self.token(TokenKind::TriviaComment) };
-          Newline          => { self.token(TokenKind::TriviaNewline) };
+          Comment          => { self.token(TokenKind::TriviaComment); };
+          Newline          => { self.token(TokenKind::TriviaNewline); };
 
           EqualOp          => { self.token(TokenKind::OperatorEquals); };
           NotEqual         => { self.token(TokenKind::OperatorNotEquals); };
@@ -388,8 +469,8 @@ impl Lexer {
           BeginStringTmpl  => beginStringTemplate;
           BeginHeredocTmpl => beginHeredocTemplate;
 
-          BrokenUTF8       => { self.token(TokenKind::ErrorBadUtf8) };
-          AnyUTF8          => { self.token(TokenKind::ErrorInvalid) };
+          BrokenUTF8       => { self.token(TokenKind::ErrorBadUtf8); };
+          AnyUTF8          => { self.token(TokenKind::ErrorInvalid); };
       *|;
 
     }%%
@@ -398,6 +479,9 @@ impl Lexer {
       write exec;
     }%%
 
-    todo!()
+    self.finish_block(data, is_final_block)
   }
 }
+
+#[cfg(test)]
+mod tests;
