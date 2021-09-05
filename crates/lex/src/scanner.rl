@@ -55,6 +55,28 @@ struct HereDocInProgress {
   start_of_line: bool,
 }
 
+struct Buffer<'a> {
+  data: &'a [u8]
+}
+
+impl<'a> ::std::ops::Index<usize> for Buffer<'a> {
+  type Output = u8;
+
+  #[inline]
+  fn index(&self, index: usize) -> &u8 {
+    &self.data[index - 1]
+  }
+}
+
+impl<'a> ::std::ops::Index<::std::ops::Range<usize>> for Buffer<'a> {
+  type Output = [u8];
+
+  #[inline]
+  fn index(&self, range: ::std::ops::Range<usize>) -> &[u8] {
+    &self.data[(range.start - 1)..(range.end - 1)]
+  }
+}
+
 impl Lexer {
   pub fn new() -> Self {
     Self::with_cs(hcltok_en_file)
@@ -99,6 +121,7 @@ impl Lexer {
   fn init(&mut self, cs: i32) {
     self.cs = cs;
     %%write init nocs;
+    self.p = 1;
   }
 
   fn token(&mut self, token_kind: TokenKind) {
@@ -122,39 +145,35 @@ impl Lexer {
 
   fn finish_block(&mut self, data: &[u8], is_final_block: bool) -> usize {
     if is_final_block {
-      debug_assert!(self.p as usize == data.len(), "expected to scan the entire block when is_final_block is true.");
+      debug_assert_eq!((self.p - 1) as usize, data.len(), "expected to scan the entire block when is_final_block is true.");
 
-      self.ts = data.len() as i32;
-      self.te = data.len() as i32;
+      self.te = self.p;
       self.token(TokenKind::TriviaEndOfFile);
-    }
-
-    // TODO: We need to check other pointers as well, not just ts...
-    let consumed = if self.ts > 0 {
-      let shift = self.ts;
-      self.ts = 0;
-      self.te -= shift;
-      #[cfg(debug_assertions)]
-      {
-        self.block_offset += shift as u32;
-      }
-      shift
+      data.len()
     } else {
-      self.p
-    };
+      let consumed = if self.ts > 0 {
+        self.ts - 1
+      } else {
+        self.p - 1
+      };
 
-    self.tok_start -= consumed;
-    #[cfg(debug_assertions)]
-    {
-      self.block_offset += consumed as u32;
+      if consumed > 0 {
+        self.p -= consumed;
+        self.ts -= consumed;
+        self.tok_start -= consumed;
+        #[cfg(debug_assertions)]
+        {
+          self.block_offset += consumed as u32;
+        }
+      }
+      consumed as usize
     }
-    consumed as usize
   }
 
-  fn scan_block(&mut self, data: &[u8], is_final_block: bool) -> usize {
-    self.p = 0;
-    let pe = data.len() as i32;
+  fn scan_block(&mut self, buf: &[u8], is_final_block: bool) -> usize {
+    let pe = (buf.len() as i32) + 1;
     let eof = if is_final_block { pe } else { i32::MIN };
+    let data = Buffer { data: buf };
 
     %%{
       include UnicodeDerived "unicode_derived.rl";
@@ -226,19 +245,26 @@ impl Lexer {
       }
 
       action beginHeredocTemplate {
-        self.token(TokenKind::SymbolHeredocOpen);
         // the token is currently the whole heredoc introducer, like
         // <<EOT or <<-EOT, followed by a newline. We want to extract
         // just the "EOT" portion that we'll use as the closing marker.
 
+        let mut newline_len = 1;
         let mut marker = &data[(self.ts as usize + 2)..(self.te as usize - 1)];
         if marker[0] == b'-' {
           marker = &marker[1..];
         }
 
         if marker[marker.len() - 1] == b'\r' {
+          newline_len += 1;
           marker = &marker[..(marker.len() - 1)];
         }
+
+        let te = self.te;
+        self.te -= newline_len;
+        self.token(TokenKind::SymbolHeredocOpen);
+        self.te = te;
+        self.token(TokenKind::TriviaNewline);
 
         self.heredocs.push(HereDocInProgress {
           marker: marker.into(),
@@ -307,7 +333,15 @@ impl Lexer {
       }
 
       action beginTemplateInterp {
-        self.token(TokenKind::TemplateInterpret);
+        if data[(self.te - 1) as usize] == b'~' {
+          self.te -= 1;
+          self.token(TokenKind::TemplateInterpret);
+          self.te += 1;
+          self.token(TokenKind::TemplateStripMarker);
+        } else {
+          self.token(TokenKind::TemplateInterpret);
+        }
+
         self.braces += 1;
         self.ret_braces.push(self.braces);
         if let Some(heredoc) = self.heredocs.last_mut() {
@@ -318,7 +352,15 @@ impl Lexer {
       }
 
       action beginTemplateControl {
-        self.token(TokenKind::TemplateControl);
+        if data[(self.te - 1) as usize] == b'~' {
+          self.te -= 1;
+          self.token(TokenKind::TemplateControl);
+          self.te += 1;
+          self.token(TokenKind::TemplateStripMarker);
+        } else {
+          self.token(TokenKind::TemplateControl);
+        }
+
         self.braces += 1;
         self.ret_braces.push(self.braces);
         if let Some(heredoc) = self.heredocs.last_mut() {
@@ -349,6 +391,11 @@ impl Lexer {
       }
 
       action closeTemplateSeqEatWhitespace {
+        let te = self.te;
+        self.te -= 1;
+        self.token(TokenKind::TemplateStripMarker);
+        self.te = te;
+
         // Only consume from the self.ret_braces stack and return if we are at
         // a suitable brace nesting level, otherwise things will get
         // confused. (Not entering this branch indicates a syntax error,
@@ -366,6 +413,7 @@ impl Lexer {
             // we want to allow the parser to catch the incorrect use
             // of a ~} to balance a generic opening brace, rather than
             // a template sequence.
+            // TODO: Strip marker
             self.token(TokenKind::TemplateSeqenceEnd);
             self.braces -= 1;
           }
@@ -479,7 +527,7 @@ impl Lexer {
       write exec;
     }%%
 
-    self.finish_block(data, is_final_block)
+    self.finish_block(buf, is_final_block)
   }
 }
 

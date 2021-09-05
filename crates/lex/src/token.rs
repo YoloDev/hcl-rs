@@ -109,8 +109,9 @@ token_enum! {
     SymbolColon(b':')             /// `:`
 
     // template tokens
-    TemplateInterpret             /// Start of `${` or `${~` block.
-    TemplateControl               /// Start of `%{` or `%{~` block.
+    TemplateInterpret             /// Start of `${` block.
+    TemplateControl               /// Start of `%{` block.
+    TemplateStripMarker           /// `~` in the begining or end of a template interpret or control block.
     TemplateSeqenceEnd            /// End of template interpret or control block.
 
     // literals
