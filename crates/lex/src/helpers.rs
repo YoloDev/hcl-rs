@@ -1,3 +1,5 @@
+use std::{collections::VecDeque, iter::FusedIterator};
+
 /// Characters below RuneSelf are represented as themselves in a single byte.
 const RUNE_SELF: u8 = 0x80;
 
@@ -54,6 +56,44 @@ fn trim_func<'a>(s: &'a [u8], f: &impl Fn(char) -> bool) -> &'a [u8] {
   let s = std::str::from_utf8(s).unwrap();
   s.trim_start_matches(f).trim_end_matches(f).as_bytes()
 }
+
+pub(crate) struct VecDequeIterator<'a, T>(&'a mut VecDeque<T>);
+
+impl<'a, T> VecDequeIterator<'a, T> {
+  pub(crate) fn new(queue: &'a mut VecDeque<T>) -> Self {
+    Self(queue)
+  }
+}
+
+impl<'a, T> Iterator for VecDequeIterator<'a, T> {
+  type Item = T;
+
+  #[inline]
+  fn next(&mut self) -> Option<Self::Item> {
+    self.0.pop_front()
+  }
+
+  #[inline]
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    (self.0.len(), Some(self.0.len()))
+  }
+}
+
+impl<'a, T> DoubleEndedIterator for VecDequeIterator<'a, T> {
+  #[inline]
+  fn next_back(&mut self) -> Option<Self::Item> {
+    self.0.pop_back()
+  }
+}
+
+impl<'a, T> ExactSizeIterator for VecDequeIterator<'a, T> {
+  #[inline]
+  fn len(&self) -> usize {
+    self.0.len()
+  }
+}
+
+impl<'a, T> FusedIterator for VecDequeIterator<'a, T> {}
 
 #[cfg(test)]
 mod tests {

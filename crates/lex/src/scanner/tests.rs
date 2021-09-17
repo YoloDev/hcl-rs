@@ -105,8 +105,8 @@ fn newlines() {
   test_scan(
     b"\n\n",
     &[
-      TokenKind::TriviaNewline,
-      TokenKind::TriviaNewline,
+      TokenKind::Newline,
+      TokenKind::Newline,
       TokenKind::TriviaEndOfFile,
     ],
   )
@@ -117,7 +117,7 @@ fn leading_byte_order_mark() {
   // Leading UTF-8 byte-order mark is ignored...
   test_scan(
     &[0xef, 0xbb, 0xbf],
-    &[TokenKind::TriviaByteOrderMark, TokenKind::TriviaEndOfFile],
+    &[TokenKind::ErrorInvalid, TokenKind::TriviaEndOfFile],
   )
 }
 
@@ -497,10 +497,10 @@ mod heredoc_templates {
       b"<<EOT\nhello world\nEOT\n",
       &[
         TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -512,10 +512,10 @@ mod heredoc_templates {
       b"<<EOT\r\nhello world\r\nEOT\r\n",
       &[
         TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -527,14 +527,14 @@ mod heredoc_templates {
       b"<<EOT\nhello ${name}\nEOT\n",
       &[
         TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::LiteralString,
         TokenKind::TemplateInterpret,
         TokenKind::Ident,
         TokenKind::TemplateSeqenceEnd,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -546,13 +546,13 @@ mod heredoc_templates {
       b"<<EOT\n${name}EOT\nEOT\n",
       &[
         TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TemplateInterpret,
         TokenKind::Ident,
         TokenKind::TemplateSeqenceEnd,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -564,17 +564,17 @@ mod heredoc_templates {
       b"<<EOF\n${<<-EOF\nhello\nEOF\n}\nEOF\n",
       &[
         TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TemplateInterpret,
-        TokenKind::SymbolHeredocOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::SymbolHeredocOpenIndented,
+        TokenKind::Newline,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TemplateSeqenceEnd,
         TokenKind::LiteralString,
         TokenKind::SymbolHeredocClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -625,13 +625,13 @@ mod expressions {
     test_scan(
       b"\na = 1\n",
       &[
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::Ident,
         TokenKind::TriviaWhitespace,
         TokenKind::OperatorAssign,
         TokenKind::TriviaWhitespace,
         TokenKind::LiteralNumber,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )
@@ -668,7 +668,7 @@ mod comments {
       &[
         TokenKind::TriviaComment,
         TokenKind::Ident,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaComment,
         TokenKind::TriviaEndOfFile,
       ],
@@ -694,7 +694,7 @@ mod comments {
       &[
         TokenKind::TriviaComment,
         TokenKind::Ident,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaComment,
         TokenKind::TriviaEndOfFile,
       ],
@@ -782,7 +782,7 @@ mod misc {
         TokenKind::Ident,
         TokenKind::TriviaWhitespace,
         TokenKind::SymbolBraceOpen,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaWhitespace,
         TokenKind::Ident,
         TokenKind::TriviaWhitespace,
@@ -803,9 +803,9 @@ mod misc {
         TokenKind::SymbolColon,
         TokenKind::TriviaWhitespace,
         TokenKind::Ident,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::SymbolBraceClose,
-        TokenKind::TriviaNewline,
+        TokenKind::Newline,
         TokenKind::TriviaEndOfFile,
       ],
     )

@@ -31,7 +31,7 @@
 
 use crate::{Token, TokenKind};
 
-struct Lexer {
+pub(crate) struct Lexer {
   p: i32,
   cs: i32,
   top: u32,
@@ -42,7 +42,7 @@ struct Lexer {
   heredocs: ::smallvec::SmallVec<[HereDocInProgress; 1]>,
   braces: u16,
   ret_braces: ::smallvec::SmallVec<[u16; 8]>,
-  tokens: ::std::collections::VecDeque<Token>,
+  pub(crate) tokens: ::std::collections::VecDeque<Token>,
   tok_start: i32,
   #[cfg(debug_assertions)]
   len: u32,
@@ -79,10 +79,6 @@ impl<'a> ::std::ops::Index<::std::ops::Range<usize>> for Buffer<'a> {
 
 impl Lexer {
   pub fn new() -> Self {
-    Self::with_cs(hcltok_en_file)
-  }
-
-  pub fn new_tokens() -> Self {
     Self::with_cs(hcltok_en_main)
   }
 
@@ -170,7 +166,7 @@ impl Lexer {
     }
   }
 
-  fn scan_block(&mut self, buf: &[u8], is_final_block: bool) -> usize {
+  pub(crate) fn scan_block(&mut self, buf: &[u8], is_final_block: bool) -> usize {
     let pe = (buf.len() as i32) + 1;
     let eof = if is_final_block { pe } else { i32::MIN };
     let data = Buffer { data: buf };
@@ -186,8 +182,6 @@ impl Lexer {
         0xF0..0xF7 . UTF8Cont . UTF8Cont . UTF8Cont
       );
       BrokenUTF8 = any - AnyUTF8;
-
-      UTF8BOM = 0xef . 0xbb . 0xbf;
 
       NumberLitContinue = (digit|'.'|('e'|'E') ('+'|'-')? digit);
       NumberLit = digit ("" | (NumberLitContinue - '.') | (NumberLitContinue* (NumberLitContinue - '.')));
@@ -251,8 +245,10 @@ impl Lexer {
 
         let mut newline_len = 1;
         let mut marker = &data[(self.ts as usize + 2)..(self.te as usize - 1)];
+        let mut indented = false;
         if marker[0] == b'-' {
           marker = &marker[1..];
+          indented = true;
         }
 
         if marker[marker.len() - 1] == b'\r' {
@@ -262,9 +258,9 @@ impl Lexer {
 
         let te = self.te;
         self.te -= newline_len;
-        self.token(TokenKind::SymbolHeredocOpen);
+        self.token(if indented { TokenKind::SymbolHeredocOpenIndented } else { TokenKind::SymbolHeredocOpen });
         self.te = te;
-        self.token(TokenKind::TriviaNewline);
+        self.token(TokenKind::Newline);
 
         self.heredocs.push(HereDocInProgress {
           marker: marker.into(),
@@ -314,7 +310,7 @@ impl Lexer {
           self.token(TokenKind::SymbolHeredocClose);
           self.ts = nls;
           self.te = nle;
-          self.token(TokenKind::TriviaNewline);
+          self.token(TokenKind::Newline);
           self.heredocs.pop();
           fret;
         }
@@ -486,18 +482,13 @@ impl Lexer {
           AnyUTF8          => { self.token(TokenKind::ErrorInvalid); };
       *|;
 
-      file := |*
-        UTF8BOM            => { self.token(TokenKind::TriviaByteOrderMark); fgoto main; };
-        (any - UTF8BOM)    => { fhold; fnext main; };
-      *|;
-
       main := |*
           Spaces           => { self.token(TokenKind::TriviaWhitespace); };
           NumberLit        => { self.token(TokenKind::LiteralNumber); };
           Ident            => { self.token(TokenKind::Ident); };
 
           Comment          => { self.token(TokenKind::TriviaComment); };
-          Newline          => { self.token(TokenKind::TriviaNewline); };
+          Newline          => { self.token(TokenKind::Newline); };
 
           EqualOp          => { self.token(TokenKind::OperatorEquals); };
           NotEqual         => { self.token(TokenKind::OperatorNotEquals); };

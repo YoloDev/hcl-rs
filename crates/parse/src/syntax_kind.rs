@@ -45,6 +45,15 @@ define_syntax_kind! {
     TOMBSTONE                   #hidden
     EOF                         #hidden
 
+    // identifier
+    IDENTIFIER                      /// identifier
+
+    // literals
+    LIT_NUMBER                      /// number literal
+    LIT_TRUE                        /// `true` literal (contextual keyword)
+    LIT_FALSE                       /// `false` literal (contextual keyword)
+    LIT_NULL                        /// `null` literal (contextual keyword)
+
     // operators
     OP_MUL                      [*] /// `*`
     OP_DIV                      [/] /// `/`
@@ -74,6 +83,19 @@ define_syntax_kind! {
     SYM_QMARK                   [?] /// `?`
     SYM_COLON                   [:] /// `:`
 
+    SYM_O_PAREN                 ['('] /// `(`
+    SYM_C_PAREN                 [')'] /// `)`
+    SYM_O_CURLY                 ['{'] /// `{`
+    SYM_C_CURLY                 ['}'] /// `}`
+    SYM_O_BRACK                 ['['] /// `[`
+    SYM_C_BRACK                 [']'] /// `]`
+    SYM_O_QUOTE                       /// Open quote
+    SYM_C_QUOTE                       /// Close quote
+
+    SYM_O_HEREDOC               [<<]  /// `<<WORD` where `WORD` can be any end delimiter.
+    SYM_O_HEREDOC_INDENTED      [<<-] /// `<<-WORD` where `WORD` can be any end delimiter.
+    SYM_C_HEREDOC                     /// Heredoc close token (the delimiter word used in the open earlier).
+
     // keywords
     KW_FOR                      [for]    /// `for`
     KW_IN                       [in]     /// `in`
@@ -82,28 +104,29 @@ define_syntax_kind! {
     KW_ENDIF                    [endif]  /// `endif`
     KW_ENDFOR                   [endfor] /// `endfor`
 
-    // symbols
-    L_PAREN                     ['('] /// `(`
-    R_PAREN                     [')'] /// `)`
-    L_CURLY                     ['{'] /// `{`
-    R_CURLY                     ['}'] /// `}`
-    L_BRACK                     ['['] /// `[`
-    R_BRACK                     [']'] /// `]`
+    // newlines
+    NEWLINE                              /// newlines
 
-    // The rest are not used in the language but recognized by the scanner so
-    // we can generate good diagnostics in the parser when users try to write
-    // things that might work in other languages they are familiar with, or
-    // simply make incorrect assumptions about the HCL language.
-    ERR_BITWISE_AND                   /// `&`
-    ERR_BITWISE_OR                    /// `|`
-    ERR_BITWISE_NOT                   /// `~`
-    ERR_BITWISE_XOR                   /// `^`
-    ERR_POW                           /// `**`
-    ERR_APOSTROPHE                    /// `'`
-    ERR_BACKTICK                      /// `` ` ``
-    ERR_SEMICOLON                     /// `;`
-    ERR_TABS                          /// `\t`
-    ERR_INVALID                       /// `�`
+    // structures
+    SOURCE_FILE                          /// a hcl source file
+
+    // items
+    ITEM_ATTRIBUTE                       /// hcl attribute item
+    ITEM_BLOCK                           /// hcl block item
+    ITEM_BLOCK_LABELS                    /// labels for a hcl block item
+    ITEM_BLOCK_BODY                      /// hcl block item's body
+
+    // expressions
+    EXPR_TERNARY                         /// hcl ternary expression
+    EXPR_BINARY_OP                       /// hcl binary operation expression
+    EXPR_RELATIVE_TRAVERSAL              /// hcl relative traversal expression
+    EXPR_SPLAT                           /// hcl splat expression
+    EXPR_PAREN                           /// hcl parenthesis expression
+    EXPR_LITERAL                         /// hcl literal expression
+    EXPR_VARIABLE                        /// hcl variable expression
+
+    // error
+    ERROR                                /// error syntax
 
     // special
     __LAST                      #hidden

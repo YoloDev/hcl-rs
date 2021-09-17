@@ -74,7 +74,8 @@ token_enum! {
     SymbolParenClose(b')')        /// `)`
     SymbolQuoteOpen               /// `"` - when used to open a new quote
     SymbolQuoteClose              /// `"` - when used to close a quote
-    SymbolHeredocOpen             /// `<<` or `<<-`
+    SymbolHeredocOpen             /// `<<`
+    SymbolHeredocOpenIndented     /// `<<-`
     SymbolHeredocClose            /// End delimititer for a heredoc (depends on the open sequence).
 
     // math operators
@@ -122,13 +123,13 @@ token_enum! {
     // ident
     Ident                         /// Identifier (or contextual keyword).
 
+    // newline
+    Newline(b'\n')                /// `\n`
 
     // trivia
     TriviaWhitespace              /// Whitespace.
     TriviaComment                 /// Comment.
-    TriviaNewline(b'\n')          /// `\n`
     TriviaEndOfFile               /// End of file token.
-    TriviaByteOrderMark           /// Leading UTF-8 byte-order mark token.
 
     // The rest are not used in the language but recognized by the scanner so
     // we can generate good diagnostics in the parser when users try to write
