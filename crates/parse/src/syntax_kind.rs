@@ -54,6 +54,18 @@ define_syntax_kind! {
     LIT_FALSE                       /// `false` literal (contextual keyword)
     LIT_NULL                        /// `null` literal (contextual keyword)
 
+    // template tokens
+    TMPL_LIT_STRING                 /// template string literal - cannot contain backslash escapes
+    TMPL_QUOT_STRING                /// template quoted string literal - might contain backslash escapes
+    TMPL_INTERPRET_START            /// template interpret start token
+    TMPL_CONTROL_START              /// template control start token
+    TMPL_SEQUENCE_END               /// template sequence end token
+    TMPL_STRIP_MARKER               /// template strip marker
+
+    // template productions
+    TMPL_INTERPRET                  /// template interpret section
+    TMPL_CONTROL                    /// template control section
+
     // operators
     OP_MUL                      [*] /// `*`
     OP_DIV                      [/] /// `/`
@@ -119,11 +131,15 @@ define_syntax_kind! {
     // expressions
     EXPR_TERNARY                         /// hcl ternary expression
     EXPR_BINARY_OP                       /// hcl binary operation expression
+    EXPR_UNARY_OP                        /// hcl unary operation expression
     EXPR_RELATIVE_TRAVERSAL              /// hcl relative traversal expression
     EXPR_SPLAT                           /// hcl splat expression
     EXPR_PAREN                           /// hcl parenthesis expression
     EXPR_LITERAL                         /// hcl literal expression
     EXPR_VARIABLE                        /// hcl variable expression
+    EXPR_TEMPLATE                        /// hcl template expression
+    EXPR_CALL                            /// hcl call expression
+    EXPR_TUPLE_LITERAL                   /// hcl tuple literal
 
     // error
     ERROR                                /// error syntax

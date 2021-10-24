@@ -1,4 +1,5 @@
 use crate::{
+  grammar::tmpl,
   parser::{CompletedMarker, Marker, Parser},
   token_set::TokenSet,
   SyntaxKind::{self, *},
@@ -16,7 +17,7 @@ const BINARY_OPS: &[TokenSet] = &[
   TokenSet::new(&[T![*], T![/], T![%]]),
 ];
 
-fn expression(p: &mut Parser) -> Option<CompletedMarker> {
+pub(super) fn expression(p: &mut Parser) -> Option<CompletedMarker> {
   ternary_conditional(p)
 }
 
@@ -277,7 +278,7 @@ pub(crate) fn expression_term(p: &mut Parser) -> Option<CompletedMarker> {
     }
 
     IDENTIFIER => {
-      if p.at(T!['(']) {
+      if p.nth_at(1, T!['(']) {
         p.eat(IDENTIFIER);
         return finish_function_call(p, m);
       }
@@ -298,26 +299,181 @@ pub(crate) fn expression_term(p: &mut Parser) -> Option<CompletedMarker> {
     }
 
     SYM_O_QUOTE | SYM_O_HEREDOC | SYM_O_HEREDOC_INDENTED => {
-      let (closer, indented_heredoc) = match p.current() {
+      let closer = match p.current() {
         SYM_O_QUOTE => {
           p.eat(SYM_O_QUOTE);
-          (SYM_C_QUOTE, false)
+          SYM_C_QUOTE
         }
 
         SYM_O_HEREDOC => {
           p.eat(SYM_O_HEREDOC);
-          (SYM_C_HEREDOC, false)
+          SYM_C_HEREDOC
         }
 
         SYM_O_HEREDOC_INDENTED => {
           p.eat(SYM_O_HEREDOC_INDENTED);
-          (SYM_C_HEREDOC, true)
+          SYM_C_HEREDOC
         }
 
         _ => unreachable!(),
       };
 
-      todo!()
+      tmpl::template_inner(p, closer);
+      Some(m.complete(p, EXPR_TEMPLATE))
+    }
+
+    T![-] => {
+      p.eat(T![-]);
+
+      // Important to use expression_with_traversals rather than expression
+      // here, otherwise we can capture a following binary expression into
+      // our negation.
+      // e.g. -46+5 should parse as (-46)+5, not -(46+5)
+      expression_with_traversals(p);
+      Some(m.complete(p, EXPR_UNARY_OP))
+    }
+
+    T![!] => {
+      p.eat(T![!]);
+
+      // Important to use expression_with_traversals rather than expression
+      // here, otherwise we can capture a following binary expression into
+      // our negation.
+      expression_with_traversals(p);
+      Some(m.complete(p, EXPR_UNARY_OP))
+    }
+
+    T!['['] => tuple_cons(p, m),
+    T!['{'] => object_cons(p, m),
+
+    _ => {
+      if !p.recovery() {
+        p.error(
+          "Invalid expression",
+          "Expected the start of an expression, but found an invalid expression token.",
+        );
+      }
+      p.set_recovery(true);
+
+      // Return a placeholder so that the AST is still structurally sound
+      // even in the presence of parse errors.
+      Some(m.complete(p, EXPR_LITERAL))
     }
   }
+}
+
+// finish_function_call parses a function call assuming that the function
+// name was already read, and so the peeker should be pointing at the opening
+// parenthesis after the name.
+fn finish_function_call(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+  p.bump(T!['(']);
+
+  // Arbitrary newlines are allowed inside the function call parentheses.
+  p.push_include_newlines(false);
+
+  'token: loop {
+    if p.eat(T![')']) {
+      break 'token;
+    }
+
+    let expr = expression(p);
+    if p.recovery() && expr.is_none() {
+      // if there was a parse error in the argument then we've
+      // probably been left in a weird place in the token stream,
+      // so we'll bail out with a partial argument list.
+      p.recover(T![')']);
+      break 'token;
+    }
+
+    if p.eat(T![...]) {
+      if !p.eat(T![')']) {
+        if !p.recovery() {
+          p.error("Missing closing parenthesis", "An expanded function argument (with ...) must be immediately followed by closing parentheses.");
+        }
+
+        p.recover(T![')']);
+      }
+
+      break 'token;
+    }
+
+    if p.eat(T![')']) {
+      break 'token;
+    }
+
+    if !p.eat(T![,]) {
+      p.error(
+        "Missing argument separator",
+        "A comma is required to separate each function argument from the next.",
+      );
+      p.recover(T![')']);
+      break 'token;
+    }
+  }
+
+  p.pop_include_newlines();
+  Some(m.complete(p, EXPR_CALL))
+}
+
+fn tuple_cons(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+  p.bump(T!['[']);
+
+  p.push_include_newlines(false);
+
+  if p.at_contextual_kw("for") {
+    let ret = finish_for_expr(p, m, ForExpression::Tuple);
+    p.pop_include_newlines();
+    return ret;
+  }
+
+  loop {
+    if p.eat(T![']']) {
+      break;
+    }
+
+    let e = expression(p);
+    if p.recovery() && e.is_none() {
+      // If expression parsing failed then we are probably in a strange
+      // place in the token stream, so we'll bail out and try to reset
+      // to after our closing bracket to allow parsing to continue.
+      p.recover(T![']']);
+      break;
+    }
+
+    if p.eat(T![']']) {
+      break;
+    }
+
+    if !p.eat(T![,]) {
+      p.error(
+        "Missing argument separator",
+        "A comma is required to separate each function argument from the next.",
+      );
+      p.recover(T![']']);
+      break;
+    }
+  }
+
+  p.pop_include_newlines();
+  Some(m.complete(p, EXPR_TUPLE_LITERAL))
+}
+
+fn object_cons(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+  p.bump(T!['{']);
+
+  // We must temporarily stop looking at newlines here while we check for
+  // a "for" keyword, since for expressions are _not_ newline-sensitive,
+  // even though object constructors are.
+  p.push_include_newlines(false);
+  let is_for = p.at_contextual_kw("for");
+  p.pop_include_newlines();
+
+  if is_for {
+    return finish_for_expr(p, m, ForExpression::Object);
+  }
+}
+
+enum ForExpression {
+  Tuple,
+  Object,
 }
