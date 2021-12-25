@@ -1,10 +1,10 @@
 use crate::{
-  parser::{Marker, Parser},
-  SyntaxKind::{self, *},
+  parser::{Marker, ParserScope},
+  SyntaxKind::*,
 };
 use std::borrow::Cow;
 
-pub(crate) fn body(p: &mut Parser, stop_on_r_curly: bool) {
+pub(crate) fn body(p: &mut ParserScope, stop_on_r_curly: bool) {
   while !(stop_on_r_curly && p.at(T!['}']) || p.at(EOF)) {
     // let next = p.current();
     match p.current() {
@@ -39,7 +39,7 @@ pub(crate) fn body(p: &mut Parser, stop_on_r_curly: bool) {
   }
 }
 
-pub(crate) fn body_item(p: &mut Parser) {
+pub(crate) fn body_item(p: &mut ParserScope) {
   let m = p.start();
   if !p.eat(IDENTIFIER) {
     m.abandon(p);
@@ -68,7 +68,7 @@ pub(crate) fn body_item(p: &mut Parser) {
 // body of a nested block containing only one attribute value all on a single
 // line, like foo { bar = baz } . It expects to find a single attribute item
 // immediately followed by the end token type with no intervening newlines.
-pub(crate) fn single_attr_body(p: &mut Parser) {
+pub(crate) fn single_attr_body(p: &mut ParserScope) {
   let m = p.start();
   if !p.eat(IDENTIFIER) {
     m.abandon(p);
@@ -97,7 +97,7 @@ pub(crate) fn single_attr_body(p: &mut Parser) {
   }
 }
 
-fn finish_body_attribute(p: &mut Parser, m: Marker, single_line: bool) {
+fn finish_body_attribute(p: &mut ParserScope, m: Marker, single_line: bool) {
   if !p.eat(T![=]) {
     // should never happen if caller behaves
     unreachable!("finish_body_attribute called with next not equals");
@@ -140,7 +140,7 @@ fn finish_body_attribute(p: &mut Parser, m: Marker, single_line: bool) {
   }
 }
 
-fn finish_body_block(p: &mut Parser, m: Marker) {
+fn finish_body_block(p: &mut ParserScope, m: Marker) {
   let labels_marker = p.start();
   let body_marker = loop {
     match p.current() {
@@ -236,6 +236,6 @@ fn finish_body_block(p: &mut Parser, m: Marker) {
   m.complete(p, ITEM_BLOCK);
 }
 
-pub(crate) fn recover_after_body_item(p: &mut Parser) {
+pub(crate) fn recover_after_body_item(p: &mut ParserScope) {
   todo!()
 }

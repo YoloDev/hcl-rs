@@ -1,8 +1,8 @@
 use crate::{
   grammar::tmpl,
-  parser::{CompletedMarker, Marker, Parser},
+  parser::{CompletedMarker, Marker, ParserScope},
   token_set::TokenSet,
-  SyntaxKind::{self, *},
+  SyntaxKind::*,
 };
 
 /// Binary operator groups are listed in order of precedence, with
@@ -17,11 +17,11 @@ const BINARY_OPS: &[TokenSet] = &[
   TokenSet::new(&[T![*], T![/], T![%]]),
 ];
 
-pub(super) fn expression(p: &mut Parser) -> Option<CompletedMarker> {
+pub(super) fn expression(p: &mut ParserScope) -> Option<CompletedMarker> {
   ternary_conditional(p)
 }
 
-fn ternary_conditional(p: &mut Parser) -> Option<CompletedMarker> {
+fn ternary_conditional(p: &mut ParserScope) -> Option<CompletedMarker> {
   // The ternary conditional operator (.. ? .. : ..) behaves somewhat
   // like a binary operator except that the "symbol" is itself
   // an expression enclosed in two punctuation characters.
@@ -54,7 +54,7 @@ fn ternary_conditional(p: &mut Parser) -> Option<CompletedMarker> {
 // binary_ops calls itself recursively to work through all of the
 // operator precedence groups, and then eventually calls expression_term
 // for each operand.
-fn binary_ops(p: &mut Parser, ops: &[TokenSet]) -> Option<CompletedMarker> {
+fn binary_ops(p: &mut ParserScope, ops: &[TokenSet]) -> Option<CompletedMarker> {
   if ops.is_empty() {
     // We've run out of operators, so now we'll just try to parse a term.
     return expression_with_traversals(p);
@@ -90,12 +90,15 @@ fn binary_ops(p: &mut Parser, ops: &[TokenSet]) -> Option<CompletedMarker> {
   Some(lhs)
 }
 
-fn expression_with_traversals(p: &mut Parser) -> Option<CompletedMarker> {
+fn expression_with_traversals(p: &mut ParserScope) -> Option<CompletedMarker> {
   let term = expression_term(p)?;
   expression_traversals(p, term)
 }
 
-fn expression_traversals(p: &mut Parser, mut from: CompletedMarker) -> Option<CompletedMarker> {
+fn expression_traversals(
+  p: &mut ParserScope,
+  mut from: CompletedMarker,
+) -> Option<CompletedMarker> {
   'traversal: loop {
     match p.current() {
       T![.] => {
@@ -217,19 +220,19 @@ fn expression_traversals(p: &mut Parser, mut from: CompletedMarker) -> Option<Co
 
           _ => {
             // arbitrary newlines allowed in brackets
-            p.push_include_newlines(false);
-            let has_errors = expression(p).is_none();
-            if p.recovery() && has_errors {
-              p.recover(T![']']);
-            } else if !p.eat(T![']']) {
-              p.bump_any();
-              p.error(
-                "Missing close bracket on index",
-                "The index operator must end with a closing bracket (\"]\").",
-              );
-              p.recover(T![']']);
-            }
-            p.pop_include_newlines();
+            p.with_include_newlines(false, |p| {
+              let has_errors = expression(p).is_none();
+              if p.recovery() && has_errors {
+                p.recover(T![']']);
+              } else if !p.eat(T![']']) {
+                p.bump_any();
+                p.error(
+                  "Missing close bracket on index",
+                  "The index operator must end with a closing bracket (\"]\").",
+                );
+                p.recover(T![']']);
+              }
+            });
 
             from = from.precede(p).complete(p, EXPR_RELATIVE_TRAVERSAL);
           }
@@ -241,35 +244,34 @@ fn expression_traversals(p: &mut Parser, mut from: CompletedMarker) -> Option<Co
   }
 }
 
-pub(crate) fn expression_term(p: &mut Parser) -> Option<CompletedMarker> {
+pub(crate) fn expression_term(p: &mut ParserScope) -> Option<CompletedMarker> {
   let m = p.start();
 
   match p.current() {
     T!['('] => {
       p.eat(T!['(']);
 
-      p.push_include_newlines(false);
-      if let None = expression(p) {
-        // attempt to place the peeker after our closing paren
-        // before we return, so that the next parser has some
-        // chance of finding a valid expression.
-        p.recover(T![')']);
-        p.pop_include_newlines();
-        return None;
-      }
+      p.with_include_newlines(false, |p| {
+        if let None = expression(p) {
+          // attempt to place the peeker after our closing paren
+          // before we return, so that the next parser has some
+          // chance of finding a valid expression.
+          p.recover(T![')']);
+          return None;
+        }
 
-      if !p.eat(T![')']) {
-        p.error(
-          "Unbalanced parentheses",
-          "Expected a closing parenthesis to terminate the expression.",
-        );
-        p.set_recovery(true);
+        if !p.eat(T![')']) {
+          p.error(
+            "Unbalanced parentheses",
+            "Expected a closing parenthesis to terminate the expression.",
+          );
+          p.set_recovery(true);
 
-        p.bump_any();
-      }
+          p.bump_any();
+        }
 
-      p.pop_include_newlines();
-      Some(m.complete(p, EXPR_PAREN))
+        Some(m.complete(p, EXPR_PAREN))
+      })
     }
 
     LIT_NUMBER => {
@@ -365,112 +367,129 @@ pub(crate) fn expression_term(p: &mut Parser) -> Option<CompletedMarker> {
 // finish_function_call parses a function call assuming that the function
 // name was already read, and so the peeker should be pointing at the opening
 // parenthesis after the name.
-fn finish_function_call(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+fn finish_function_call(p: &mut ParserScope, m: Marker) -> Option<CompletedMarker> {
   p.bump(T!['(']);
 
   // Arbitrary newlines are allowed inside the function call parentheses.
-  p.push_include_newlines(false);
-
-  'token: loop {
-    if p.eat(T![')']) {
-      break 'token;
-    }
-
-    let expr = expression(p);
-    if p.recovery() && expr.is_none() {
-      // if there was a parse error in the argument then we've
-      // probably been left in a weird place in the token stream,
-      // so we'll bail out with a partial argument list.
-      p.recover(T![')']);
-      break 'token;
-    }
-
-    if p.eat(T![...]) {
-      if !p.eat(T![')']) {
-        if !p.recovery() {
-          p.error("Missing closing parenthesis", "An expanded function argument (with ...) must be immediately followed by closing parentheses.");
-        }
-
-        p.recover(T![')']);
+  p.with_include_newlines(false, |p| {
+    'token: loop {
+      if p.eat(T![')']) {
+        break 'token;
       }
 
-      break 'token;
+      let expr = expression(p);
+      if p.recovery() && expr.is_none() {
+        // if there was a parse error in the argument then we've
+        // probably been left in a weird place in the token stream,
+        // so we'll bail out with a partial argument list.
+        p.recover(T![')']);
+        break 'token;
+      }
+
+      if p.eat(T![...]) {
+        if !p.eat(T![')']) {
+          if !p.recovery() {
+            p.error("Missing closing parenthesis", "An expanded function argument (with ...) must be immediately followed by closing parentheses.");
+          }
+
+          p.recover(T![')']);
+        }
+
+        break 'token;
+      }
+
+      if p.eat(T![')']) {
+        break 'token;
+      }
+
+      if !p.eat(T![,]) {
+        p.error(
+          "Missing argument separator",
+          "A comma is required to separate each function argument from the next.",
+        );
+        p.recover(T![')']);
+        break 'token;
+      }
     }
 
-    if p.eat(T![')']) {
-      break 'token;
-    }
-
-    if !p.eat(T![,]) {
-      p.error(
-        "Missing argument separator",
-        "A comma is required to separate each function argument from the next.",
-      );
-      p.recover(T![')']);
-      break 'token;
-    }
-  }
-
-  p.pop_include_newlines();
-  Some(m.complete(p, EXPR_CALL))
+    Some(m.complete(p, EXPR_CALL))
+  })
 }
 
-fn tuple_cons(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+fn tuple_cons(p: &mut ParserScope, m: Marker) -> Option<CompletedMarker> {
   p.bump(T!['[']);
 
-  p.push_include_newlines(false);
-
-  if p.at_contextual_kw("for") {
-    let ret = finish_for_expr(p, m, ForExpression::Tuple);
-    p.pop_include_newlines();
-    return ret;
-  }
-
-  loop {
-    if p.eat(T![']']) {
-      break;
+  p.with_include_newlines(false, |p| {
+    if p.at_contextual_kw("for") {
+      let ret = finish_for_expr(p, m, ForExpression::Tuple);
+      return ret;
     }
 
-    let e = expression(p);
-    if p.recovery() && e.is_none() {
-      // If expression parsing failed then we are probably in a strange
-      // place in the token stream, so we'll bail out and try to reset
-      // to after our closing bracket to allow parsing to continue.
-      p.recover(T![']']);
-      break;
+    loop {
+      if p.eat(T![']']) {
+        break;
+      }
+
+      let e = expression(p);
+      if p.recovery() && e.is_none() {
+        // If expression parsing failed then we are probably in a strange
+        // place in the token stream, so we'll bail out and try to reset
+        // to after our closing bracket to allow parsing to continue.
+        p.recover(T![']']);
+        break;
+      }
+
+      if p.eat(T![']']) {
+        break;
+      }
+
+      if !p.eat(T![,]) {
+        p.error(
+          "Missing argument separator",
+          "A comma is required to separate each function argument from the next.",
+        );
+        p.recover(T![']']);
+        break;
+      }
     }
 
-    if p.eat(T![']']) {
-      break;
-    }
-
-    if !p.eat(T![,]) {
-      p.error(
-        "Missing argument separator",
-        "A comma is required to separate each function argument from the next.",
-      );
-      p.recover(T![']']);
-      break;
-    }
-  }
-
-  p.pop_include_newlines();
-  Some(m.complete(p, EXPR_TUPLE_LITERAL))
+    Some(m.complete(p, EXPR_TUPLE_LITERAL))
+  })
 }
 
-fn object_cons(p: &mut Parser, m: Marker) -> Option<CompletedMarker> {
+fn object_cons(p: &mut ParserScope, m: Marker) -> Option<CompletedMarker> {
   p.bump(T!['{']);
 
   // We must temporarily stop looking at newlines here while we check for
   // a "for" keyword, since for expressions are _not_ newline-sensitive,
   // even though object constructors are.
-  p.push_include_newlines(false);
-  let is_for = p.at_contextual_kw("for");
-  p.pop_include_newlines();
+  let is_for = p.with_include_newlines(false, |p| p.at_contextual_kw("for"));
 
   if is_for {
     return finish_for_expr(p, m, ForExpression::Object);
   }
+
+  p.with_include_newlines(true, |p| {
+    loop {
+      if p.eat(NEWLINE) {
+        continue;
+      }
+
+      if p.eat(T!['}']) {
+        break;
+      }
+
+      // TODO: Deal with naked identifiers probably?
+      expression(p);
+      if p.recovery() {
+        // If expression parsing failed then we are probably in a strange
+        // place in the token stream, so we'll bail out and try to reset
+        // to after our closing brace to allow parsing to continue.
+        p.recover(T!['}']);
+        break;
+      }
+    }
+  })
 }
 
 enum ForExpression {

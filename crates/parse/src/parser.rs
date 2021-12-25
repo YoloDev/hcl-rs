@@ -3,7 +3,7 @@
 use crate::{
   event::Event,
   ParseError,
-  SyntaxKind::{self, EOF, ERROR, TOMBSTONE},
+  SyntaxKind::{self, EOF, TOMBSTONE},
   TokenSet, TokenSource,
 };
 use drop_bomb::DropBomb;
@@ -12,17 +12,43 @@ use std::cell::Cell;
 /// `Parser` struct provides the low-level API for
 /// navigating through the stream of tokens and
 /// constructing the parse tree. The actual parsing
-/// happens in the [`grammar`](super::grammar) module.
+/// happens in the [grammar](super::grammar) module.
 ///
 /// However, the result of this `Parser` is not a real
 /// tree, but rather a flat stream of events of the form
 /// "start expression, consume number literal,
-/// finish expression". See `Event` docs for more.
+/// finish expression". See [Event](crate::event::Event)
+/// docs for more.
 pub(crate) struct Parser<'t> {
   token_source: &'t mut dyn TokenSource,
   events: Vec<Event>,
   steps: Cell<u32>,
   recovery: bool,
+}
+
+pub(crate) struct ParserScope<'s, 't> {
+  parser: &'s mut Parser<'t>,
+  include_newlines: bool,
+}
+
+impl<'s, 't> ParserScope<'s, 't> {
+  pub(crate) fn include_newlines<'a: 's>(
+    &'a mut self,
+    include_newlines: bool,
+  ) -> ParserScope<'a, 't> {
+    Self {
+      parser: self.parser,
+      include_newlines,
+    }
+  }
+
+  pub(crate) fn with_include_newlines<'a: 's, F, R>(&'a mut self, include_newlines: bool, f: F) -> R
+  where
+    F: FnOnce(&mut ParserScope<'a, 't>) -> R,
+  {
+    let mut scope = self.include_newlines(include_newlines);
+    f(&mut scope)
+  }
 }
 
 impl<'t> Parser<'t> {
@@ -38,13 +64,15 @@ impl<'t> Parser<'t> {
   pub(crate) fn finish(self) -> Vec<Event> {
     self.events
   }
+}
 
+impl<'s, 't> ParserScope<'s, 't> {
   pub(crate) fn recovery(&self) -> bool {
-    self.recovery
+    self.parser.recovery
   }
 
   pub(crate) fn set_recovery(&mut self, value: bool) {
-    self.recovery = value;
+    self.parser.recovery = value;
   }
 
   /// Returns the kind of the current token.
@@ -59,11 +87,11 @@ impl<'t> Parser<'t> {
   pub(crate) fn nth(&self, n: usize) -> SyntaxKind {
     assert!(n <= 3);
 
-    let steps = self.steps.get();
+    let steps = self.parser.steps.get();
     assert!(steps <= 10_000_000, "the parser seems stuck");
-    self.steps.set(steps + 1);
+    self.parser.steps.set(steps + 1);
 
-    self.token_source.lookahead_nth(n).kind
+    self.parser.token_source.lookahead_nth(n).kind
   }
 
   /// Checks if the current token is `kind`.
@@ -72,7 +100,7 @@ impl<'t> Parser<'t> {
   }
 
   pub(crate) fn nth_at(&self, n: usize, kind: SyntaxKind) -> bool {
-    self.token_source.lookahead_nth(n).kind == kind
+    self.parser.token_source.lookahead_nth(n).kind == kind
   }
 
   /// Consume the next token if `kind` matches.
@@ -92,14 +120,14 @@ impl<'t> Parser<'t> {
 
   /// Checks if the current token is contextual keyword with text `t`.
   pub(crate) fn at_contextual_kw(&self, kw: &str) -> bool {
-    self.token_source.is_keyword(kw)
+    self.parser.token_source.is_keyword(kw)
   }
 
   /// Starts a new node in the syntax tree. All nodes and tokens
   /// consumed between the `start` and the corresponding `Marker::complete`
   /// belong to the same node.
   pub(crate) fn start(&mut self) -> Marker {
-    let pos = self.events.len() as u32;
+    let pos = self.parser.events.len() as u32;
     self.push_event(Event::tombstone());
     Marker::new(pos)
   }
@@ -179,13 +207,13 @@ impl<'t> Parser<'t> {
   // }
 
   fn do_bump(&mut self, kind: SyntaxKind) {
-    self.token_source.bump();
+    self.parser.token_source.bump();
 
     self.push_event(Event::Token { kind });
   }
 
   fn push_event(&mut self, event: Event) {
-    self.events.push(event)
+    self.parser.events.push(event)
   }
 }
 
@@ -206,27 +234,27 @@ impl Marker {
   /// Finishes the syntax tree node and assigns `kind` to it,
   /// and mark the create a `CompletedMarker` for possible future
   /// operation like `.precede()` to deal with forward_parent.
-  pub(crate) fn complete(mut self, p: &mut Parser, kind: SyntaxKind) -> CompletedMarker {
+  pub(crate) fn complete(mut self, p: &mut ParserScope, kind: SyntaxKind) -> CompletedMarker {
     self.bomb.defuse();
     let idx = self.pos as usize;
-    match &mut p.events[idx] {
+    match &mut p.parser.events[idx] {
       Event::Start { kind: slot, .. } => {
         *slot = kind;
       }
       _ => unreachable!(),
     }
-    let finish_pos = p.events.len() as u32;
+    let finish_pos = p.parser.events.len() as u32;
     p.push_event(Event::Finish);
     CompletedMarker::new(self.pos, finish_pos, kind)
   }
 
   /// Abandons the syntax tree node. All its children
   /// are attached to its parent instead.
-  pub(crate) fn abandon(mut self, p: &mut Parser) {
+  pub(crate) fn abandon(mut self, p: &mut ParserScope) {
     self.bomb.defuse();
     let idx = self.pos as usize;
-    if idx == p.events.len() - 1 {
-      match p.events.pop() {
+    if idx == p.parser.events.len() - 1 {
+      match p.parser.events.pop() {
         Some(Event::Start {
           kind: TOMBSTONE,
           forward_parent: None,
@@ -265,10 +293,10 @@ impl CompletedMarker {
   /// Append a new `START` events as `[START, FINISH, NEWSTART]`,
   /// then mark `NEWSTART` as `START`'s parent with saving its relative
   /// distance to `NEWSTART` into forward_parent(=2 in this case);
-  pub(crate) fn precede(self, p: &mut Parser) -> Marker {
+  pub(crate) fn precede(self, p: &mut ParserScope) -> Marker {
     let new_pos = p.start();
     let idx = self.start_pos as usize;
-    match &mut p.events[idx] {
+    match &mut p.parser.events[idx] {
       Event::Start { forward_parent, .. } => {
         *forward_parent = Some(new_pos.pos - self.start_pos);
       }
@@ -288,6 +316,7 @@ impl CompletedMarker {
       } => *kind = TOMBSTONE,
       _ => unreachable!(),
     }
+
     match &mut p.events[finish_idx] {
       slot @ Event::Finish => *slot = Event::tombstone(),
       _ => unreachable!(),
