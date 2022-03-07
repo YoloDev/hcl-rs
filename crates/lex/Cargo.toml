@@ -11,6 +11,6 @@ smallvec = "1"
 
 [dev-dependencies]
 const_format = "0.2"
-test-case = "1"
+test-case = "2"
 
 [features]
