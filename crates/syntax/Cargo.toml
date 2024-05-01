@@ -12,4 +12,4 @@ rowan = "0.14"
 hcl-parse = { path = "../parse", version = "0.0.0" }
 
 [dev-dependencies]
-test-case = "2"
+test-case = "2.2.2"
