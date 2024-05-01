@@ -10,7 +10,7 @@ bytes = { version = "1", optional = true }
 smallvec = "1"
 
 [dev-dependencies]
-const_format = "0.2"
+const_format = "0.2.32"
 test-case = "2"
 
 [features]
