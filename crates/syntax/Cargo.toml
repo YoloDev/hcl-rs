@@ -7,7 +7,7 @@ edition = "2018"
 
 [dependencies]
 levenshtein = "1"
-rowan = "0.14"
+rowan = "0.15"
 
 hcl-parse = { path = "../parse", version = "0.0.0" }
 
